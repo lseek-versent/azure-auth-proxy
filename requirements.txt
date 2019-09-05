@@ -1,0 +1,5 @@
+beautifulsoup4
+selenium
+python-gnupg
+pyotp
+mitmproxy
