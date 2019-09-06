@@ -249,7 +249,7 @@ class AzureSamlClient(object):
     def extractSamlResponse(self, responseHtml):
         soup = BeautifulSoup(responseHtml, 'html.parser')
         samlResponse = soup.find('input', {'name': 'SAMLResponse'}).get('value')
-        return self.withDebug(samlResponse, 'SAMLResponse:%s', samlResponse)
+        return self.log.withDebug(samlResponse, 'SAMLResponse:%s', samlResponse)
 
 
 def setupLogging(loglevel=logging.INFO):

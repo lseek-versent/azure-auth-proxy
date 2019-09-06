@@ -1,5 +1,6 @@
 beautifulsoup4
-selenium
+mitmproxy
 python-gnupg
 pyotp
-mitmproxy
+requests
+selenium

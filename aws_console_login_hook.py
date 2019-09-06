@@ -50,8 +50,8 @@ import zlib
 
 from mitmproxy import http, ctx
 
-from samllogger import SamlLogger
 from azuresaml import AzureSamlClient
+from samllogger import SamlLogger
 
 
 CONFFILE_PATH = os.getenv('CONFFILE_PATH', '/azuresaml/config.json')
@@ -75,7 +75,7 @@ class AwsSamlClient(object):
         self.debug = self.log.debug
         self.error = self.log.error
 
-        self.globalConfig =globalConfig
+        self.globalConfig = globalConfig
         config = globalConfig['console_login_hook']
         self.tenantId = config['tenant_id']
         self.appId = config['app_id']
@@ -132,22 +132,17 @@ class AwsSamlClient(object):
 class AwsConsoleLoginHook(object):
 
     def __init__(self, customConfigFile):
-        ctx.log.info('creating hook instance, configfile:{}'.format(customConfigFile))
         with open(customConfigFile) as conffile:
             self.globalConfig = json.load(conffile)
         self.config = self.globalConfig['console_login_hook']
-        ctx.log.info('config:{}'.format(self.config))
         self.hookEndpoint = self.config.get('console_auth_endpoint',
                                             DEFAULT_CONSOLE_AUTH_ENDPOINT)
         self.verbose = self.config.get('verbose', False)
         self.logger = SamlLogger(ctx.log)
         self.logger.enableDebugLogs = self.verbose
-        self.logger.info('Intercepting: %s', self.hookEndpoint)
 
     def request(self, flow):
         """mitmproxy hook to intercept requests"""
-        ctx.log.info('looking at:{}'.format(flow.request.url))
-        ctx.log.info('looking for:{}'.format(self.hookEndpoint))
         if flow.request.url == self.hookEndpoint:
             ctx.log.info('Intercepted request to:{}'.format(self.hookEndpoint))
             samlClient = AwsSamlClient(self.globalConfig, self.logger)
