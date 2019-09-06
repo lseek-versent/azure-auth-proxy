@@ -12,26 +12,36 @@ Lastly, because this is an mitmproxy addon we can't have command line arguments
 arguments through environment variables that must be decared when starting up
 the docker container.
 
-Environment variables expected by this script:
+The configuration for the console login hook is read from a JSON file with (at
+least) the following keys:
 
-    AWS_TENANT_ID:
-        Tenant ID to authenticate as
-    AWS_APP_ID:
-        App ID to authenticate as
-    AWS_CONSOLE_AUTH_ENDPOINT:
-        The endpoint to treat as a request for AWS console auth. The path need
-        not really exist but the domain name should (because the browser needs
-        to actually resolve the domain name before sending the request to the
-        proxy). Default: https://www.amazon.com/awsConsoleLogin
-    AWS_CONSOLE_DEBUG:
-        Turns on debug logs if this is defined.
+    {
+        "console_login_hook": {
+            "tenant_id": "<aws_tenant_id>",
+            "app_id": "<aws_app_id>"
+            "console_auth_endpoint": "<endpoint to use for console auth [optional]>"
+            "verbose": <true|false, default: false>,
+        }
+    }
+
+Note that root of the config file is NOT the console login hook config but
+instead the console login hook config resides in a section within the config.
+This allows us to have one config file for all relevant modules.
+
+Reading from a config file allows us to mount the config file from the host and
+modify it on the fly without having to restart the docker container (which we
+would have to do if we were using environment variables). The config file is
+read each time the hook is run and therefore modifications are reflected on the
+next request.
+
+The path to the config file will be read from the CONFFILE_PATH environment
+variable which should be passed in when the docker container starts.
 """
 
 
 import base64
 from datetime import datetime, timezone, timedelta
-import logging
-import logging.config
+import json
 import sys
 import os
 import urllib.parse
@@ -40,40 +50,36 @@ import zlib
 
 from mitmproxy import http, ctx
 
+from samllogger import SamlLogger
 from azuresaml import AzureSamlClient
 
 
+CONFFILE_PATH = os.getenv('CONFFILE_PATH', '/azuresaml/config.json')
 DEFAULT_CONSOLE_AUTH_ENDPOINT = 'https://www.amazon.com/awsConsoleLogin'
-LOGGER_NAME = 'awsConsoleLoginHook'
+CONSOLE_AUTH_LOGGER_NAME = 'awsConsoleLoginHook'
 
 
 class AwsSamlClient(object):
-    def __init__(self, tenantId, appId, mitmLogger=None):
-        self.mitmLogger = mitmLogger
-        if mitmLogger:
-            self.log = mitmLogger
-        else:
-            self.log = logging.getLogger(LOGGER_NAME)
+    """Log into the AWS console using the SAML client to do the SAML dance"""
 
-        self.tenantId = tenantId
-        self.appId = appId
+    LOGGER_NAME = CONSOLE_AUTH_LOGGER_NAME
 
-    def debug(self, *args):
-        if self.mitmLogger:
-            # MITM logger does not accept varargs
-            logStr = args[0] % (args[1:])
-            self.mitmLogger.debug(logStr)
-        else:
-            self.log.debug(*args)
+    def __init__(self, globalConfig, logger):
+        """Parameters:
 
-    def error(self, *args):
-        if self.mitmLogger:
-            # MITM logger does not accept varargs
-            logStr = args[0] % (args[1:])
-            self.mitmLogger.error(logStr)
-        else:
-            self.log.error(*args)
+            config:
+                The (global) python config dictionary
+            logger:
+                The instance of SamlLogger to use for logging"""
+        self.log = logger
+        self.debug = self.log.debug
+        self.error = self.log.error
 
+        self.globalConfig =globalConfig
+        config = globalConfig['console_login_hook']
+        self.tenantId = config['tenant_id']
+        self.appId = config['app_id']
+        self.enableDebugLogs = config['verbose']
 
     @property
     def loginUrl(self):
@@ -91,7 +97,9 @@ class AwsSamlClient(object):
                 <Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion">{}</Issuer>
                 <samlp:NameIDPolicy Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress" />
             </samlp:AuthnRequest>
-            '''.format(requestUuid, now.isoformat(timespec='milliseconds'), self.appId)
+            '''.format(requestUuid,
+                       now.isoformat(timespec='milliseconds'),
+                       self.appId)
 
         self.debug('Using SAML request:%s', samlRequest)
         compressor = zlib.compressobj()
@@ -105,10 +113,7 @@ class AwsSamlClient(object):
                 urllib.parse.quote(samlBase64))
 
     def doAuth(self):
-        samlClient = AzureSamlClient(self.loginUrl,
-                'david.koo@nswlrs.com.au',
-                '/home/koo/Work/MISC/SAMLLIB/ldap-password.gpg',
-                '/home/koo/Work/MISC/SAMLLIB/totp-secret.gpg')
+        samlClient = AzureSamlClient(self.globalConfig, self.loginUrl, self.log)
         responseHtml = samlClient.submitSamlRequest(wholeResponse=True)
         headers = {
             'Referer': 'https://login.microsoftonline.com/',
@@ -125,86 +130,28 @@ class AwsSamlClient(object):
 
 
 class AwsConsoleLoginHook(object):
+
+    def __init__(self, customConfigFile):
+        ctx.log.info('creating hook instance, configfile:{}'.format(customConfigFile))
+        with open(customConfigFile) as conffile:
+            self.globalConfig = json.load(conffile)
+        self.config = self.globalConfig['console_login_hook']
+        ctx.log.info('config:{}'.format(self.config))
+        self.hookEndpoint = self.config.get('console_auth_endpoint',
+                                            DEFAULT_CONSOLE_AUTH_ENDPOINT)
+        self.verbose = self.config.get('verbose', False)
+        self.logger = SamlLogger(ctx.log)
+        self.logger.enableDebugLogs = self.verbose
+        self.logger.info('Intercepting: %s', self.hookEndpoint)
+
     def request(self, flow):
-        authReqEndpoint = os.environ.get('AWS_CONSOLE_AUTH_ENDPOINT',
-                DEFAULT_CONSOLE_AUTH_ENDPOINT)
-        if flow.request.url == authReqEndpoint:
-            ctx.log.debug('Intercepted request to:{}'.format(authReqEndpoint))
-            config = {
-                'app_id': os.getenv('AWS_APP_ID'),
-                'tenant_id': os.getenv('AWS_TENANT_ID'),
-                'verbose': os.environ.get('AWS_CONSOLE_DEBUG', False),
-            }
-            flow.response = self.run(config, ctx.log)
-
-    # (Static) methods to support running from CLI (for debugging)
-    @staticmethod
-    def setupLogging(loglevel):
-        log_config = {
-            'version': 1,
-            'formatters': {
-                'custom': {
-                    'format': '%(levelname)s:%(funcName)s:%(lineno)d: %(message)s',
-                },
-            },
-            'handlers': {
-                'custom': {
-                    'class': 'logging.StreamHandler',
-                    'formatter': 'custom',
-                    'level': loglevel,
-                    'stream': sys.stdout,
-                },
-            },
-            'loggers': {
-                LOGGER_NAME: {
-                    'level': loglevel,
-                    'handlers': ['custom'],
-                    'propagate': False,
-                },
-                'azureSamlLib': {
-                    'level': loglevel,
-                    'handlers': ['custom'],
-                    'propagate': False,
-                },
-            },
-            'root': {
-                'level': logging.INFO,
-                'handlers': ['custom'],
-            },
-        }
-        logging.config.dictConfig(log_config)
-
-    @staticmethod
-    def run(config, logger=None):
-        logLevel = logging.DEBUG if config['verbose'] else logging.INFO
-        AwsConsoleLoginHook.setupLogging(logLevel)
-        samlClient = AwsSamlClient(config['tenant_id'], config['app_id'], logger)
-        return samlClient.doAuth()
-
-    @staticmethod
-    def main(argv):
-        parser = ArgumentParser(description='SAML client for AWS Console Auth')
-
-        parser.add_argument('-a', '--app-id',
-            default=os.getenv('AWS_APP_ID', 'undefined-app'),
-            help='APP ID of the AWS service')
-        parser.add_argument('-t', '--tenant-id',
-            default=os.getenv('AWS_TENANT_ID', 'undefined-tenant'),
-            help='Tenant ID of the AWS service')
-        parser.add_argument('-v', '--verbose', action='store_true',
-            help='Enable verbose debug logs (passwords will NOT be revealed)')
-        args = parser.parse_args(argv)
-
-        config = {
-            'app_id': args.app_id,
-            'tenant_id': args.tenant_id,
-            'verbose': os.environ.get('AWS_CONSOLE_DEBUG', False) or args.verbose
-        }
-        return AwsConsoleLoginHook.run(config)
+        """mitmproxy hook to intercept requests"""
+        ctx.log.info('looking at:{}'.format(flow.request.url))
+        ctx.log.info('looking for:{}'.format(self.hookEndpoint))
+        if flow.request.url == self.hookEndpoint:
+            ctx.log.info('Intercepted request to:{}'.format(self.hookEndpoint))
+            samlClient = AwsSamlClient(self.globalConfig, self.logger)
+            flow.response = samlClient.doAuth()
 
 
-addons = [AwsConsoleLoginHook()]
-
-
-if __name__ == '__main__':
-    AwsConsoleLoginHook.main(sys.argv[1:])
+addons = [AwsConsoleLoginHook(CONFFILE_PATH)]

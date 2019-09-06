@@ -1,17 +1,21 @@
 """Library for performing Azure based SAML login
 
 Since this library will (ultimately) run from an mitmproxy addon it can't
-really use command line arguments to configure its parameters. Instead if
-relies on environment variables:
+really use command line arguments to configure its parameters. Instead it
+relies on a config file whose path is configured in the CONFFILE_PATH
+environment variable.
 
-    SAML_USERNAME:
-        User to authenticate as
-    SAML_PASSWORD_FILE:
-        Path to GPG encrypted file (inside the container) that holds the
-        password to use.
-    SAML_TOTP_SECRET_FILE:
-        Path to GPG encrypted file (inside the container) that holds the
-        TOTP secret from which tokens are generated.
+This library reads configuration under the "saml_lib" section of the config
+file:
+
+    {
+        "saml_lib": {
+            "username": ...,
+            "password_file": ...,
+            "totp_secret_file": ...,
+            "verbose": <true|false, default false>
+        }
+    }
 
 If the command line arguments are specifed (as during debugging) then the
 command line arguments take priority.
@@ -41,37 +45,13 @@ from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-
-class ObjectWithLogger(object):
-    def __init__(self, mitmLogger=None):
-        self.mitmLogger = mitmLogger
-        if mitmLogger:
-            self.log = mitmLogger
-        else:
-            self.log = logging.getLogger("azureSamlLib")
-
-    def debug(self, *args):
-        if self.mitmLogger:
-            # MITM logger does not accept varargs :(
-            logStr = args[0] % (args[1:])
-            self.mitmLogger.debug(logStr)
-        else:
-            self.log.debug(*args)
-
-    def error(self, *args):
-        if self.mitmLogger:
-            # MITM logger does not accept varargs :(
-            logStr = args[0] % (args[1:])
-            self.mitmLogger.error(logStr)
-        else:
-            self.log.debug(*args)
-
-    def withDebug(self, value, *debugArgs):
-        self.debug(*debugArgs)
-        return value
+from samllogger import SamlLogger
 
 
-class PageState(ObjectWithLogger):
+CONFFILE_PATH = os.getenv('CONFFILE_PATH', '/azuresaml/config.json')
+SAMLLIB_LOGGER = 'azureSamlLib'
+
+class PageState(object):
     """A state of the page in the login flow.
 
     Encapsulates the process of selecting a required element from the page
@@ -89,7 +69,7 @@ class PageState(ObjectWithLogger):
     # The CSS selector to find the "Next" button in the page (if any)
     nextSelector = None  # should usually be overridden by subclasses
 
-    def __init__(self, driver, value):
+    def __init__(self, driver, value, logger=None):
         """Parameters:
             driver:
                 The selenium web driver to use for interactions
@@ -97,7 +77,9 @@ class PageState(ObjectWithLogger):
                 The value to input into the selected field.
         """
 
-        super(PageState, self).__init__()
+        self.log = logger
+        self.debug = self.log.debug
+        self.error = self.log.error
         self.nextState = None
         self.driver = driver
         self.value = value
@@ -142,39 +124,40 @@ class TokenInput(PageState):
     nextSelector = 'input[type=submit]'
 
 
-class AzureSamlClient(ObjectWithLogger):
+class AzureSamlClient(object):
     """A client that does the actual SAML login dance.
 
     The client takes a URL (which would include the SAML request) to initiate
     the SAML login sequence along with credentials, performs the dance, and
     returns the SAML response as a string."""
+
     LOGIN_ATTEMPTS = 3
 
-    def __init__(self, requestUrl, username, passwordFile, totpSecretFile):
+    def __init__(self, config, requestUrl, logger):
         """Parameters:
+            config:
+                Configuration object that contains the saml library config
+                (under the "saml_lib" key).
             requestUrl:
-                The URL to GET to initiate the SAML login sequence (and
-                contains the SAML request object).
-            username:
-                The username to log in as.
-            passwordFile:
-                (GPG encrypted) file that contains the password for the user.
-            totpSecret:
-                (GPG encrypted) file that contains the OTP secret. The OTP
-                token will be generated from this secret.
+                URL to send the SAML request to - this initiates the SAML
+                dance.
+            logger:
+                Instance of SamlLogger
         """
-        super(AzureSamlClient, self).__init__()
+        self.log = logger
+        self.debug = self.log.debug
+        self.error = self.log.error
 
         self.requestUrl = requestUrl
-        self.username = username
-        self.password, totpSecret = self.getCredentials(passwordFile, totpSecretFile)
+        libConfig = config['saml_lib']
+        self.username = libConfig['username']
+        self.password, totpSecret = self.getCredentials(libConfig)
         self.totpToken = pyotp.TOTP(totpSecret).now()
         self.debug('Using username:%s', self.username)
-
         self.webdriver = self.setupSelenium()
         self.startState = self.setupStates()
 
-    def getCredentials(self, passwordFile, totpSecretFile):
+    def getCredentials(self, libConfig):
         gpgHome = osp.join(os.environ.get("HOME"), ".gnupg")
         pubring = osp.join(gpgHome, 'pubring.kbx')
         secring = osp.join(gpgHome, 'private-keys-v1.d')
@@ -188,8 +171,8 @@ class AzureSamlClient(ObjectWithLogger):
                     '{} decryption failed:{}'.format(secretFile, secret.status)
             return str(secret)
 
-        password = decrypt(passwordFile)
-        totpSecret = decrypt(totpSecretFile)
+        password = decrypt(libConfig['password_file'])
+        totpSecret = decrypt(libConfig['totp_secret_file'])
         return (password, totpSecret)
 
     def setupSelenium(self):
@@ -210,9 +193,15 @@ class AzureSamlClient(ObjectWithLogger):
 
     def setupStates(self):
         """Define and connect the states required login flow"""
-        usernameState = UsernameInput(self.webdriver, self.username)
-        passwordState = PasswordInput(self.webdriver, self.password)
-        tokenState = TokenInput(self.webdriver, self.totpToken)
+        usernameState = UsernameInput(self.webdriver,
+                                      self.username,
+                                      self.log)
+        passwordState = PasswordInput(self.webdriver,
+                                      self.password,
+                                      self.log)
+        tokenState = TokenInput(self.webdriver,
+                                self.totpToken,
+                                self.log)
         usernameState.nextState = passwordState
         passwordState.nextState = tokenState
         return usernameState
@@ -263,7 +252,7 @@ class AzureSamlClient(ObjectWithLogger):
         return self.withDebug(samlResponse, 'SAMLResponse:%s', samlResponse)
 
 
-def setupLogging(loglevel):
+def setupLogging(loglevel=logging.INFO):
     log_config = {
         'version': 1,
         'formatters': {
@@ -275,13 +264,11 @@ def setupLogging(loglevel):
             'custom': {
                 'class': 'logging.StreamHandler',
                 'formatter': 'custom',
-                'level': loglevel,
                 'stream': sys.stdout,
             },
         },
         'loggers': {
-            'thisApp': {
-                'level': loglevel,
+            SAMLLIB_LOGGER: {
                 'handlers': ['custom'],
                 'propagate': False,
             },
@@ -297,17 +284,8 @@ def setupLogging(loglevel):
 def main(argv):
     parser = ArgumentParser(description='Azure SAML client')
 
-    parser.add_argument('-p', '--password-file',
-        default=os.environ.get('SAML_PASSWORD_FILE', 'password.gpg'),
-        help='Path to the (gpg encrypted) file that contains the password')
-    parser.add_argument('-t', '--totp-secret-file',
-        default=os.environ.get('SAML_TOTP_SECRET_FILE', 'totp-secret.gpg'),
-        help='Path to the (gpg encrypted) file that contains the OTP secret')
-    parser.add_argument('-u', '--username',
-        default=os.environ.get('SAML_USERNAME', 'will@not.work.com'),
-        help='Username to use to log in')
-    parser.add_argument('-v', '--verbose', action='store_true',
-        help='Enable verbose debug logs (passwords will NOT be revealed)')
+    parser.add_argument('-c', '--config-file', default=CONFFILE_PATH,
+        help='Path to the config file')
     parser.add_argument('-w', '--whole-response', action='store_true',
         help=('Return the whole auth response doc rather than just the '
               'SAMLResponse string'))
@@ -315,12 +293,9 @@ def main(argv):
         help='The URL to submit the SAML login request to')
     args = parser.parse_args(argv)
 
-    setupLogging(logging.DEBUG if args.verbose else logging.INFO)
-    logger = logging.getLogger('thisApp')
-    samlClient = AzureSamlClient(args.url,
-            args.username,
-            args.password_file,
-            args.totp_secret_file)
+    setupLogging()
+    logger = SamlLogger(logging.getLogger(SAMLLIB_LOGGER))
+    samlClient = AzureSamlClient(args.config_file, args.url, logger)
     response = samlClient.submitSamlRequest(args.whole_response)
     print(response, end='')
 
