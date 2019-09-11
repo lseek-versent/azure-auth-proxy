@@ -51,6 +51,7 @@ class AuthProxy(bottle.Bottle):
         self.post('/configure', callback=self.postConfig)
         self.get('/globalProtect', callback=self.proxyGlobalProtectVpn)
         self.get('/awsConsole', callback=self.proxyAwsConsole)
+        self.get('/awsCli', callback=self.proxyAwsCli)
 
     def postConfig(self):
         """Receive app config into memory"""
@@ -69,7 +70,9 @@ class AuthProxy(bottle.Bottle):
         samlClient.doAuth()
 
     def proxyAwsCli(self):
-        raise bottle.HTTPError(403, "Not Implemented")
+        self.assertIsConfigured()
+        samlClient = AwsSamlClient(self.globalConfig, self.log)
+        samlClient.doAuth(forConsole=False)
 
     def assertIsConfigured(self):
         if not self.globalConfig:

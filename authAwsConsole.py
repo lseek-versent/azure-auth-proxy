@@ -85,17 +85,12 @@ class AwsSamlClient(object):
                 self.tenantId,
                 urllib.parse.quote(samlBase64))
 
-    def doAuth(self):
+    def doAuth(self, forConsole=True):
         samlClient = AzureSamlClient(self.globalConfig, self.loginUrl, self.log)
-        responseHtml = samlClient.submitSamlRequest(wholeResponse=True)
+        response = samlClient.submitSamlRequest(wholeResponse=forConsole)
         headers = {
-            'Referer': 'https://login.microsoftonline.com/',
-            'Content-Type': 'text/html',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
+            'Content-Type': 'text/html' if forConsole else 'text/plain',
         }
-        raise bottle.HTTPResponse(body=responseHtml,
+        raise bottle.HTTPResponse(body=response,
                                   status=200,
                                   headers=headers)
