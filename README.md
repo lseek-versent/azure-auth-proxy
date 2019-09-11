@@ -1,4 +1,35 @@
-# A proxy to authenticate services against Azure AD
+# A web app to authenticate services against Azure AD
+
+## Building
+
+1. Clone this repository
+2. `docker build -t <your image tag> .`
+
+The resulting image will run selenium + firefox in headless mode to do the auth
+dance. To debug the auth dance use the `Dockerfile-debug` file: `docker build
+-t <your image tag> -f Dockerfile-debug .`
+
+This will build a docker image that has a `vncserver` running in it. Connecting
+to this `vncserver` using a VNC client (like `vncviewer`) should show you the
+browser/server UI interaction that happens behind the scenes.
+
+## Running
+
+    docker run --name authproxy \
+        --rm \
+        -p 127.0.0.1:8080:8080 \
+        <your image tag>
+
+If running the debug image, you need to publish the vnc server port as well:
+
+    docker run --name authproxy \
+        --rm \
+        -p 127.0.0.1:5900:5900 \
+        -p 127.0.0.1:8080:8080 \
+        <your image tag>
+
+The VNC connection password is `secret`.
+
 
 ## Components
 
@@ -49,7 +80,6 @@ The `authProxy` application contains the following components:
 
 
 ## Configuration
-================
 The auth proxy starts out as an "empty" service listening on port 8080 (which,
 as mentioned before, should be published to a port only on the localhost for
 security). At this stage it needs to be configured before it the service
@@ -66,7 +96,8 @@ holding the configuration for a particular module:
 
     {
         "auth_server": { # configuration for main auth_server
-            "verbose_logs": <true|false, default false>
+            "verbose_logs": <true|false, default false>,
+            "log_file": <path to log file, optional. Default: /azuresaml/auth.py>
         },
 
         "saml_lib": { # configuration for the SAML client
@@ -75,12 +106,12 @@ holding the configuration for a particular module:
             "totp_secret": "<totp generator secret>"
         },
 
-        "console_login_hook": {
+        "console_login_hook": { # configuration for the AWS console
             "tenant_id": "<AWS tenant ID>",
             "app_id": "<APP ID URI>"
         },
 
-        "vpn_login_hook": {
+        "vpn_login_hook": { # configuration for the GlobalProtect VPN
             "server_url": "<Base URL to GlobalProtect VPN server>"
         }
     }
@@ -96,9 +127,11 @@ and passed to `curl` (or any other client) when required:
 
 ## Endpoints and service proxies
 
+
 ### `POST /configure`
 This endpoint accepts only a `POST` request. Use this endpoint to configure the
 auth proxy app. See [Link](#configuration)
+
 
 ### `GET /globalProtect`
 `GET` this endpoint to get the GlobalProtect VPN prelogin cookie. This cookie
@@ -155,6 +188,7 @@ server:
 
 and then pointing the browser to
 http://anynameyouwant.amazon.com:8080/awsConsole
+
 
 ## TODO
 Proxy for CLI authentication.

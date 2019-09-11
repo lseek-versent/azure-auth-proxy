@@ -12,6 +12,7 @@ The auth server itself has the following options:
     {
         "auth_server": {
             "verbose_logs": <true|false, default false>,
+            "log_file": <path to log file, optional. Default: '/azuresaml/authproxy.log'>
         }
     }
 
@@ -21,6 +22,7 @@ submodules.
 
 import logging
 import logging.config
+from logging.handlers import RotatingFileHandler
 import os
 import sys
 
@@ -36,6 +38,7 @@ AUTH_PROXY_PORT = 8080
 class AuthProxy(bottle.Bottle):
     CONFIG_KEY = 'auth_server'
     LOGGER_NAME = 'AuthProxyLogger'
+    DEFAULT_LOGFILE = '/azuresaml/authproxy.log'
 
     def __init__(self):
         super(AuthProxy, self).__init__()
@@ -53,9 +56,7 @@ class AuthProxy(bottle.Bottle):
         """Receive app config into memory"""
         self.globalConfig = bottle.request.json
         self.config = self.globalConfig.get(self.CONFIG_KEY, {})
-        logFile = self.config.get('logFile', 'authproxy.log')
-        self.setupLogging(logFile, self.config.get('verbose_logs', False))
-        self.log = logging.getLogger(self.LOGGER_NAME)
+        self.log = self.getLogger()
 
     def proxyGlobalProtectVpn(self):
         self.assertIsConfigured()
@@ -74,39 +75,20 @@ class AuthProxy(bottle.Bottle):
         if not self.globalConfig:
             raise bottle.HTTPError(400, "Application is not configured")
 
-    @classmethod
-    def setupLogging(cls, logFile, verbose=False):
-        log_config = {
-            'version': 1,
-            'formatters': {
-                'custom': {
-                    'format': '%(levelname)s:%(funcName)s:%(lineno)d: %(message)s',
-                },
-            },
-            'handlers': {
-                'default': {
-                    'class': 'logging.StreamHandler',
-                    'formatter': 'custom',
-                    'stream': sys.stdout,
-                },
-                'authProxyFile': {
-                    'class': 'logging.FileHandler',
-                    'filename': logFile,
-                    'formatter': 'custom',
-                },
-            },
-            'loggers': {
-                cls.LOGGER_NAME: {
-                    'handlers': ['authProxyFile'],
-                    'propagate': False,
-                },
-            },
-            'root': {
-                'level': logging.INFO,
-                'handlers': ['default'],
-            },
-        }
-        logging.config.dictConfig(log_config)
+    def getLogger(self):
+        logFile = self.config.get('log_file', self.DEFAULT_LOGFILE)
+        verbose = self.config.get('verbose_logs', False)
+        logFormat = '%(levelname)s:%(funcName)s:%(lineno)d: %(message)s'
+        formatter = logging.Formatter(fmt=logFormat)
+        handler = RotatingFileHandler(filename=logFile,
+                                      maxBytes=10 << 20, # 10 MB
+                                      backupCount=2)
+        handler.setFormatter(formatter)
+        log = logging.getLogger(__name__)
+        log.propagate = False
+        log.addHandler(handler)
+        log.setLevel(logging.DEBUG if verbose else logging.INFO)
+        return log
 
 
 if __name__ == '__main__':
