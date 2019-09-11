@@ -1,6 +1,6 @@
 beautifulsoup4
+bottle
 mitmproxy
-python-gnupg
 pyotp
 requests
 selenium

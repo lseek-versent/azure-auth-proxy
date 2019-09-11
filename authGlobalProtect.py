@@ -1,11 +1,23 @@
-"""mitmproxy "addon" to intercept login auth requests to Azure for the
-GlobalProtect VPN
+"""Script to use the Azure SAML library to authenticate for the GlobalProtect
+VPN
 
-This script is expected to be run inside a docker container containing all the
-relevant packages. Also, the gpg agent musht be running with the password to
-the password and totp secret files being read into the agent's memory (couldn't
-get the azure saml library to start up the gpg agent and ask for credentials
-within the script).
+This script is expected to be run as part of the bigger "auth proxy"
+application.
+
+The configuration options for this module should reside in the 'vpn_login_hook'
+sub-dictionary of the global configuration dictionary. The following
+configuration keys are understood and will be processed:
+
+    {
+        'vpn_login_hook': {
+            'server_url': "..."
+        }
+    }
+
+    where:
+        server_url:
+            (Base) URL of the VPN server to contact. Globalprotect service
+            endpoints will be constructed by appending them to this URL.
 """
 
 
@@ -16,35 +28,29 @@ import re
 import urllib.parse
 from xml.etree import ElementTree
 
-from mitmproxy import http, ctx
+import bottle
 import requests
 
-from azuresaml import AzureSamlClient
-from samllogger import SamlLogger
-
-
-DEFAULT_VPN_AUTH_ENDPOINT = 'https://www.vpn.com/vpn'
-CONFFILE_PATH = os.getenv('CONFFILE_PATH', '/azuresaml/config.json')
-CONFIG_KEY = 'vpn_login_hook'
-VPN_LOGGER_NAME = "vpnLoginHook"
+from azureSaml import AzureSamlClient
 
 
 class GlobalProtectClient(object):
+    CONFIG_KEY = 'vpn_login_hook'
+
     def __init__(self, globalConfig, logger):
         """Parameters:
 
-            config:
+            globalConfig:
                 The (global) python config dictionary
             logger:
-                The instance of SamlLogger to use for logging"""
+                The instance of logging.Logger to use for logging"""
         self.log = logger
         self.debug = self.log.debug
         self.error = self.log.error
 
         self.globalConfig = globalConfig
-        config = globalConfig[CONFIG_KEY]
+        config = globalConfig[self.CONFIG_KEY]
         self.serverUrl = config['server_url']
-        self.enableDebugLogs = config['verbose']
         self.samlRequest = self.getSamlRequest()
         self.relayState = self.getRelayState(self.samlRequest)
 
@@ -89,19 +95,15 @@ class GlobalProtectClient(object):
         samlResponse = samlClient.submitSamlRequest()
         self.debug('Got samlResponse:%s', samlResponse)
         preLoginCookie = self.getPreLoginCookie(samlResponse)
-
         headers = {
             'Referer': 'https://login.microsoftonline.com/',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
             'Content-Type': 'text/plain',
         }
-        return http.HTTPResponse.make(
-            200,
-            preLoginCookie.encode(),
-            headers)
+        # Wierd bottle behaviour - can't return a response but instead need to
+        # "raise" the response.
+        raise bottle.HTTPResponse(body=preLoginCookie,
+                                  status=200,
+                                  headers=headers)
 
     def getPreLoginCookie(self, samlResponse):
         """Submit SAML response to VPN server and get pre-login cookie"""
@@ -120,25 +122,3 @@ class GlobalProtectClient(object):
             self.error('Could not find prelogin-cookie')
         self.debug('Got cookie:%s', preLoginCookie)
         return preLoginCookie
-
-
-class GlobalProtectVpnLoginHook(object):
-    def __init__(self, customConfigFile):
-        with open(customConfigFile) as conffile:
-            self.globalConfig = json.load(conffile)
-        self.config = self.globalConfig[CONFIG_KEY]
-        self.hookEndpoint = self.config.get('vpn_auth_endpoint',
-                                            DEFAULT_VPN_AUTH_ENDPOINT)
-        self.verbose = self.config.get('verbose', False)
-        self.logger = SamlLogger(ctx.log)
-        self.logger.enableDebugLogs = self.verbose
-
-    def request(self, flow):
-        """mitmproxy hook to intercept requests"""
-        if flow.request.url == self.hookEndpoint:
-            ctx.log.info('Intercepted request to:{}'.format(self.hookEndpoint))
-            samlClient = GlobalProtectClient(self.globalConfig, self.logger)
-            flow.response = samlClient.doAuth()
-
-
-addons = [GlobalProtectVpnLoginHook(CONFFILE_PATH)]

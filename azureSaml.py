@@ -1,12 +1,7 @@
 """Library for performing Azure based SAML login
 
-Since this library will (ultimately) run from an mitmproxy addon it can't
-really use command line arguments to configure its parameters. Instead it
-relies on a config file whose path is configured in the CONFFILE_PATH
-environment variable.
-
-This library reads configuration under the "saml_lib" section of the config
-file:
+This library takes in configuration as a dict object and reads configuration
+under the "saml_lib" section of the config object:
 
     {
         "saml_lib": {
@@ -16,9 +11,6 @@ file:
             "verbose": <true|false, default false>
         }
     }
-
-If the command line arguments are specifed (as during debugging) then the
-command line arguments take priority.
 """
 
 from argparse import ArgumentParser
@@ -35,7 +27,6 @@ import sys
 import time
 
 from bs4 import BeautifulSoup
-import gnupg
 import pyotp
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
@@ -45,11 +36,11 @@ from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from samllogger import SamlLogger
-
 
 CONFFILE_PATH = os.getenv('CONFFILE_PATH', '/azuresaml/config.json')
 SAMLLIB_LOGGER = 'azureSamlLib'
+CONFIG_KEY = 'saml_lib'
+
 
 class PageState(object):
     """A state of the page in the login flow.
@@ -142,7 +133,7 @@ class AzureSamlClient(object):
                 URL to send the SAML request to - this initiates the SAML
                 dance.
             logger:
-                Instance of SamlLogger
+                Instance of logger to use for logging
         """
         self.log = logger
         self.debug = self.log.debug
@@ -151,29 +142,12 @@ class AzureSamlClient(object):
         self.requestUrl = requestUrl
         libConfig = config['saml_lib']
         self.username = libConfig['username']
-        self.password, totpSecret = self.getCredentials(libConfig)
-        self.totpToken = pyotp.TOTP(totpSecret).now()
+        self.password = libConfig['password']
+        self.totpSecret = libConfig['totp_secret']
+        self.totpToken = pyotp.TOTP(self.totpSecret).now()
         self.debug('Using username:%s', self.username)
         self.webdriver = self.setupSelenium()
         self.startState = self.setupStates()
-
-    def getCredentials(self, libConfig):
-        gpgHome = osp.join(os.environ.get("HOME"), ".gnupg")
-        pubring = osp.join(gpgHome, 'pubring.kbx')
-        secring = osp.join(gpgHome, 'private-keys-v1.d')
-        gpg = gnupg.GPG(gnupghome=gpgHome, use_agent=True,
-            keyring=pubring, secret_keyring=secring)
-
-        def decrypt(secretFile):
-            with open(secretFile, 'rb') as sFile:
-                secret = gpg.decrypt_file(sFile)
-                assert secret.ok, \
-                    '{} decryption failed:{}'.format(secretFile, secret.status)
-            return str(secret)
-
-        password = decrypt(libConfig['password_file'])
-        totpSecret = decrypt(libConfig['totp_secret_file'])
-        return (password, totpSecret)
 
     def setupSelenium(self):
         """Set up connection with the (remote) selenium server"""
@@ -249,9 +223,11 @@ class AzureSamlClient(object):
     def extractSamlResponse(self, responseHtml):
         soup = BeautifulSoup(responseHtml, 'html.parser')
         samlResponse = soup.find('input', {'name': 'SAMLResponse'}).get('value')
-        return self.log.withDebug(samlResponse, 'SAMLResponse:%s', samlResponse)
+        self.debug('Original Saml Response:%s', samlResponse)
+        return samlResponse
 
 
+# Used only when invoked from the command line (i.e. during testing).
 def setupLogging(loglevel=logging.INFO):
     log_config = {
         'version': 1,
@@ -281,6 +257,7 @@ def setupLogging(loglevel=logging.INFO):
     logging.config.dictConfig(log_config)
 
 
+# Used only when invoked from the command line (i.e. during testing).
 def main(argv):
     parser = ArgumentParser(description='Azure SAML client')
 
@@ -293,9 +270,14 @@ def main(argv):
         help='The URL to submit the SAML login request to')
     args = parser.parse_args(argv)
 
+    import json
+    with open(args.config_file) as cfgfile:
+        globalConfig = json.load(cfgfile)
     setupLogging()
-    logger = SamlLogger(logging.getLogger(SAMLLIB_LOGGER))
-    samlClient = AzureSamlClient(args.config_file, args.url, logger)
+    logger = logging.getLogger(SAMLLIB_LOGGER)
+    if globalConfig[CONFIG_KEY]['verbose_logs']:
+        logger.setLevel(logging.DEBUG)
+    samlClient = AzureSamlClient(globalConfig, args.url, logger)
     response = samlClient.submitSamlRequest(args.whole_response)
     print(response, end='')
 

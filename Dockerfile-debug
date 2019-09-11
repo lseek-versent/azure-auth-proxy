@@ -12,7 +12,12 @@ RUN mkdir -p /azuresaml/confdir && \
     chmod go-rwx /home/seluser/.gnupg
 
 USER seluser
-COPY aws_console_login_hook.py saml_process_hook.py azuresaml.py samllogger.py /azuresaml/
+COPY authProxy.py \
+    authAwsConsole.py \
+    authGlobalProtect.py \
+    saml_process_hook.py \
+    azuresaml.py \
+    /azuresaml/
 COPY mitmdump.conf /etc/supervisor/conf.d/
 
 
