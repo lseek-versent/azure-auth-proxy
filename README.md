@@ -15,21 +15,39 @@ browser/server UI interaction that happens behind the scenes.
 
 ## Running
 
-    docker run --name authproxy \
-        --rm \
-        -p 127.0.0.1:8080:8080 \
-        <your image tag>
+### Start the container
+```sh
+docker run --name authproxy \
+    --rm \
+    -p 127.0.0.1:8080:8080 \
+    <your image tag>
+```
 
 If running the debug image, you need to publish the vnc server port as well:
 
-    docker run --name authproxy \
-        --rm \
-        -p 127.0.0.1:5900:5900 \
-        -p 127.0.0.1:8080:8080 \
-        <your image tag>
+```sh
+docker run --name authproxy \
+    --rm \
+    -p 127.0.0.1:5900:5900 \
+    -p 127.0.0.1:8080:8080 \
+    <your image tag>
+```
 
 The VNC connection password is `secret`.
 
+### Configure the app
+
+```sh
+gpg --decrypt config.json.gpg | curl -d @- \
+    -H "Content-type: application/json" \
+    http://localhost:8080/configure
+```
+
+### `GET` an endpoint
+
+```sh
+curl http://localhost:8080/globalProtect # gives prelogin cookie
+```
 
 ## Components
 
@@ -86,43 +104,56 @@ security). At this stage it needs to be configured before it the service
 proxies can provide service. This is done by `POST`ing a configuration JSON to
 the `/configure` end point:
 
-    curl -H "Content-type: application/json" \
-        -d @config.json \
-        http://localhost:8080/configure
+```sh
+curl -H "Content-type: application/json" \
+    -d @config.json \
+    http://localhost:8080/configure
+```
 
 
 This configuration file is a dictionary of dictionaries, with each section
 holding the configuration for a particular module:
 
-    {
-        "auth_server": { # configuration for main auth_server
-            "verbose_logs": <true|false, default false>,
-            "log_file": <path to log file, optional. Default: /azuresaml/auth.py>
-        },
+```json
+{
+    "auth_server": {
+        "verbose_logs": <true|false, default false>,
+        "log_file": "<path to log file, optional. Default: /azuresaml/auth.py>"
+    },
 
-        "saml_lib": { # configuration for the SAML client
-            "username": "<username to log into AD as",
-            "password": "<password for the user>",
-            "totp_secret": "<totp generator secret>"
-        },
+    "saml_lib": {
+        "username": "<username to log into AD as",
+        "password": "<password for the user>",
+        "totp_secret": "<totp generator secret>"
+    },
 
-        "console_login_hook": { # configuration for the AWS console
-            "tenant_id": "<AWS tenant ID>",
-            "app_id": "<APP ID URI>"
-        },
+    "console_login_hook": {
+        "tenant_id": "<AWS tenant ID>",
+        "app_id": "<APP ID URI>"
+    },
 
-        "vpn_login_hook": { # configuration for the GlobalProtect VPN
-            "server_url": "<Base URL to GlobalProtect VPN server>"
-        }
+    "vpn_login_hook": {
+        "server_url": "<Base URL to GlobalProtect VPN server>"
     }
+}
+```
+
+The sections that are currently understood by the authProxy app are:
+
+* `auth_server`: Configuration for the authProxy app itself.
+* `saml_lib`: Configuration for the common SAML module.
+* `console_login_hook`: Configuration for the AwsSamlClient module.
+* `vpn_login_hook`: Configuration for the GlobalProtectClient module.
 
 Since this configuration contains secrets it is not advisable to save this to a
 cleartext file. Instead it should be saved to an encrypted file and decrypted
 and passed to `curl` (or any other client) when required:
 
-    gpg --decrypt config.json.gpg | curl -d @- \
-        -H "Content-type: application/json" \
-        http://localhost:8080/configure
+```sh
+gpg --decrypt config.json.gpg | curl -d @- \
+    -H "Content-type: application/json" \
+    http://localhost:8080/configure
+```
 
 
 ## Endpoints and service proxies
@@ -135,15 +166,18 @@ auth proxy app. See [Link](#configuration)
 
 ### `GET /globalProtect`
 `GET` this endpoint to get the GlobalProtect VPN prelogin cookie. This cookie
-can then be supplied to `openvpn` to log into the GlobalProtect VPN:
+can then be supplied to `openvpn` to log into the GlobalProtect VPN (would
+probably need to `sudo` first):
 
-    curl http://localhost:8080/globalProtect | \
-    openconnect --protocol=gp \
-        --usergroup gateway:prelogin-cookie \
-        -u <vpn-username> \
-        --passwd-on-stdin \
-        --os mac-intel \
-        <vpn-server-url>/login.esp/:prelogin-cookie
+```sh
+curl http://localhost:8080/globalProtect | \
+openconnect --protocol=gp \
+    --usergroup gateway:prelogin-cookie \
+    -u <vpn-username> \
+    --passwd-on-stdin \
+    --os mac-intel \
+    <vpn-server-url>/login.esp/:prelogin-cookie
+```
 
 NOTE: GlobalProtect VPN does **NOT** support Linux. Therefore when using Linux
 to log into GlobalProtect VPN you need to trick the server into thinking it's
