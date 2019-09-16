@@ -118,7 +118,7 @@ holding the configuration for a particular module:
 {
     "auth_server": {
         "verbose_logs": <true|false, default false>,
-        "log_file": "<path to log file, optional. Default: /azuresaml/auth.py>"
+        "log_file": "<path to log file, optional. Default: /azuresaml/authproxy.log>"
     },
 
     "saml_lib": {
