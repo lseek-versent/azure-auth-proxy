@@ -8,6 +8,7 @@ under the "saml_lib" section of the config object:
             "username": ...,
             "password_file": ...,
             "totp_secret_file": ...,
+            "skip_token": <true|false, default false>
             "verbose": <true|false, default false>
         }
     }
@@ -134,6 +135,9 @@ class AzureSamlClient(object):
                 dance.
             logger:
                 Instance of logger to use for logging
+            skipToken:
+                Skip the token input state, assume username + password is
+                enough.
         """
         self.log = logger
         self.debug = self.log.debug
@@ -143,8 +147,10 @@ class AzureSamlClient(object):
         libConfig = config['saml_lib']
         self.username = libConfig['username']
         self.password = libConfig['password']
-        self.totpSecret = libConfig['totp_secret']
-        self.totpToken = pyotp.TOTP(self.totpSecret).now()
+        self.skipToken = libConfig.get('skip_token', False)
+        if not self.skipToken:
+            self.totpSecret = libConfig['totp_secret']
+            self.totpToken = pyotp.TOTP(self.totpSecret).now()
         self.debug('Using username:%s', self.username)
         self.webdriver = self.setupSelenium()
         self.startState = self.setupStates()
@@ -173,11 +179,13 @@ class AzureSamlClient(object):
         passwordState = PasswordInput(self.webdriver,
                                       self.password,
                                       self.log)
-        tokenState = TokenInput(self.webdriver,
-                                self.totpToken,
-                                self.log)
         usernameState.nextState = passwordState
-        passwordState.nextState = tokenState
+        if not self.skipToken:
+            tokenState = TokenInput(self.webdriver,
+                                    self.totpToken,
+                                    self.log)
+            passwordState.nextState = tokenState
+        else:
         return usernameState
 
     def submitSamlRequest(self, wholeResponse=False):
