@@ -185,7 +185,6 @@ class AzureSamlClient(object):
                                     self.totpToken,
                                     self.log)
             passwordState.nextState = tokenState
-        else:
         return usernameState
 
     def submitSamlRequest(self, wholeResponse=False):
