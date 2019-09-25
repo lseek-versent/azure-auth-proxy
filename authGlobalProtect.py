@@ -22,13 +22,14 @@ configuration keys are understood and will be processed:
 
 
 import base64
+from datetime import datetime, timedelta
+from functools import lru_cache
 import json
 import os
 import re
 import urllib.parse
 from xml.etree import ElementTree
 
-import bottle
 import requests
 
 from azureSaml import AzureSamlClient
@@ -36,6 +37,7 @@ from azureSaml import AzureSamlClient
 
 class GlobalProtectClient(object):
     CONFIG_KEY = 'vpn_login_hook'
+    CACHE_DURATION_SECS = 3598  # a little less than 1 hour
 
     def __init__(self, globalConfig, logger):
         """Parameters:
@@ -51,8 +53,6 @@ class GlobalProtectClient(object):
         self.globalConfig = globalConfig
         config = globalConfig[self.CONFIG_KEY]
         self.serverUrl = config['server_url']
-        self.samlRequest = self.getSamlRequest()
-        self.relayState = self.getRelayState(self.samlRequest)
 
     def post(self, endpoint, formDict):
         headers = {
@@ -90,26 +90,42 @@ class GlobalProtectClient(object):
         self.debug('Got relay_state:%s', qs['RelayState'])
         return qs['RelayState']
 
+    # The SAML assertion for GlobalProtect has a validity of 60 mins. So if we
+    # want to log reconnect within a 60 min interval we can reuse the assertion
+    # without having to go through the entire SAML dance again.
+    @lru_cache(maxsize=1)
+    def getSAMLResponse(self):
+        samlRequest = self.getSamlRequest()
+        relayState = self.getRelayState(samlRequest)
+        self.log.debug("Getting SAML response")
+        samlClient = AzureSamlClient(self.globalConfig,
+                                     samlRequest,
+                                     self.log)
+        response = samlClient.submitSamlRequest()
+        preLoginCookie = self.getPreLoginCookie(response, relayState)
+        return (preLoginCookie, datetime.now())
+
     def doAuth(self):
-        samlClient = AzureSamlClient(self.globalConfig, self.samlRequest, self.log)
-        samlResponse = samlClient.submitSamlRequest()
-        self.debug('Got samlResponse:%s', samlResponse)
-        preLoginCookie = self.getPreLoginCookie(samlResponse)
+        response, creationTime = self.getSAMLResponse()
+        self.log.debug('Got response created on:%s', creationTime)
+        now = datetime.now()
+        if now - creationTime > timedelta(seconds=self.CACHE_DURATION_SECS):
+            self.log.debug('Invalidating cached SAML response')
+            self.getSAMLResponse.cache_clear()
+            response, _ = self.getSAMLResponse()
+
+        self.debug('Got cookie:%s', response)
         headers = {
             'Referer': 'https://login.microsoftonline.com/',
             'Content-Type': 'text/plain',
         }
-        # Wierd bottle behaviour - can't return a response but instead need to
-        # "raise" the response.
-        raise bottle.HTTPResponse(body=preLoginCookie,
-                                  status=200,
-                                  headers=headers)
+        return (headers, response)
 
-    def getPreLoginCookie(self, samlResponse):
+    def getPreLoginCookie(self, samlResponse, relayState):
         """Submit SAML response to VPN server and get pre-login cookie"""
         formDict = {
             "SAMLResponse": samlResponse,
-            "RelayState": self.relayState
+            "RelayState": relayState
         }
         resp = self.post("SAML20/SP/ACS", formDict)
         self.debug("Got VPN response:%s", resp.text)

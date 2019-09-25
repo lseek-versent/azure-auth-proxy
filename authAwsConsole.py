@@ -21,7 +21,8 @@ following configuration keys are understood and will be processed:
             App ID URI of the AWS console
 """
 import base64
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
+from functools import lru_cache
 import json
 import sys
 import os
@@ -29,7 +30,6 @@ import urllib.parse
 from uuid import uuid4
 import zlib
 
-import bottle
 from azureSaml import AzureSamlClient
 
 
@@ -37,6 +37,7 @@ class AwsSamlClient(object):
     """Log into the AWS console using the SAML client to do the SAML dance"""
 
     CONFIG_KEY = 'console_login_hook'
+    CACHE_DURATION_SECS = 60*4 + 55
 
     def __init__(self, globalConfig, logger):
         """Parameters:
@@ -85,12 +86,34 @@ class AwsSamlClient(object):
                 self.tenantId,
                 urllib.parse.quote(samlBase64))
 
-    def doAuth(self, forConsole=True):
+    # The SAML assertion for AWS has a validity of 5 minutes. So if we want
+    # to log into multiple consoles within a 5 minute interval we can reuse
+    # the assertion without having to go through the entire SAML dance
+    # again.
+    #
+    # Always return the whole response so that the cached response can be
+    # used for both console and cli
+    @lru_cache(maxsize=1)
+    def getSAMLResponse(self):
+        self.log.debug("Getting SAML response")
         samlClient = AzureSamlClient(self.globalConfig, self.loginUrl, self.log)
-        response = samlClient.submitSamlRequest(wholeResponse=forConsole)
+        response = samlClient.submitSamlRequest(wholeResponse=True)
+        return (samlClient, response, datetime.now())
+
+    def doAuth(self, forConsole=True):
+        samlClient, response, creationTime = self.getSAMLResponse()
+        self.log.debug('Got response created on:%s', creationTime)
+        now = datetime.now()
+        if now - creationTime > timedelta(seconds=self.CACHE_DURATION_SECS):
+            self.log.debug('Invalidating cached SAML response')
+            self.getSAMLResponse.cache_clear()
+            samlClient, response, _ = self.getSAMLResponse()
+        else:
+            self.log.debug('Using cached/new SAMLResponse')
+        if not forConsole:
+            response = samlClient.extractSamlResponse(response)
+        self.log.debug('Returning SAMLResponse:%s', response)
         headers = {
             'Content-Type': 'text/html' if forConsole else 'text/plain',
         }
-        raise bottle.HTTPResponse(body=response,
-                                  status=200,
-                                  headers=headers)
+        return (headers, response)

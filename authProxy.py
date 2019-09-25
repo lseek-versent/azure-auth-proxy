@@ -46,6 +46,9 @@ class AuthProxy(bottle.Bottle):
         self.globalConfig = None
         self.config = None
         self.setupRoutes()
+        # These proxy objects will be created when the app is configured
+        self.authGlobalProtectProxy = None
+        self.authAwsProxy = None
 
     def setupRoutes(self):
         self.post('/configure', callback=self.postConfig)
@@ -58,21 +61,29 @@ class AuthProxy(bottle.Bottle):
         self.globalConfig = bottle.request.json
         self.config = self.globalConfig.get(self.CONFIG_KEY, {})
         self.log = self.getLogger()
+        self.globalProtect = GlobalProtectClient(self.globalConfig, self.log)
+        self.aws = AwsSamlClient(self.globalConfig, self.log)
 
     def proxyGlobalProtectVpn(self):
         self.assertIsConfigured()
-        samlClient = GlobalProtectClient(self.globalConfig, self.log)
-        samlClient.doAuth()
+        headers, body = self.globalProtect.doAuth()
+        raise bottle.HTTPResponse(body=body,
+                                  status=200,
+                                  headers=headers)
 
     def proxyAwsConsole(self):
         self.assertIsConfigured()
-        samlClient = AwsSamlClient(self.globalConfig, self.log)
-        samlClient.doAuth()
+        headers, body = self.aws.doAuth()
+        raise bottle.HTTPResponse(body=body,
+                                  status=200,
+                                  headers=headers)
 
     def proxyAwsCli(self):
         self.assertIsConfigured()
-        samlClient = AwsSamlClient(self.globalConfig, self.log)
-        samlClient.doAuth(forConsole=False)
+        headers, body = self.aws.doAuth(forConsole=False)
+        raise bottle.HTTPResponse(body=body,
+                                  status=200,
+                                  headers=headers)
 
     def assertIsConfigured(self):
         if not self.globalConfig:

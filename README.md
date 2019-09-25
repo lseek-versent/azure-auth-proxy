@@ -225,4 +225,5 @@ http://anynameyouwant.amazon.com:8080/awsConsole
 
 
 ## TODO
-Proxy for CLI authentication.
+~Proxy for CLI authentication.~
+Convert the python code into a proper python package.
