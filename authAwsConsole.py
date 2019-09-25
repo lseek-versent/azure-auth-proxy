@@ -21,7 +21,7 @@ following configuration keys are understood and will be processed:
             App ID URI of the AWS console
 """
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from functools import lru_cache
 import json
 import sys
@@ -97,14 +97,14 @@ class AwsSamlClient(object):
     def getSAMLResponse(self):
         self.log.debug("Getting SAML response")
         samlClient = AzureSamlClient(self.globalConfig, self.loginUrl, self.log)
-        response = samlClient.submitSamlRequest(wholeResponse=True)
-        return (samlClient, response, datetime.now())
+        response, expiry = samlClient.submitSamlRequest(wholeResponse=True)
+        return (samlClient, response, expiry)
 
     def doAuth(self, forConsole=True):
-        samlClient, response, creationTime = self.getSAMLResponse()
-        self.log.debug('Got response created on:%s', creationTime)
-        now = datetime.now()
-        if now - creationTime > timedelta(seconds=self.CACHE_DURATION_SECS):
+        samlClient, response, expiry = self.getSAMLResponse()
+        self.log.debug('Got response, expires on:%s', expiry)
+        now = datetime.now(tz=timezone.utc)
+        if now >= expiry:
             self.log.debug('Invalidating cached SAML response')
             self.getSAMLResponse.cache_clear()
             samlClient, response, _ = self.getSAMLResponse()

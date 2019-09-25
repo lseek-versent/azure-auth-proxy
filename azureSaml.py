@@ -16,6 +16,7 @@ under the "saml_lib" section of the config object:
 
 from argparse import ArgumentParser
 import base64
+from datetime import datetime
 import getpass
 import json
 import logging
@@ -26,6 +27,7 @@ from pprint import pprint
 import re
 import sys
 import time
+from xml.etree import ElementTree as ET
 
 from bs4 import BeautifulSoup
 import pyotp
@@ -217,7 +219,9 @@ class AzureSamlClient(object):
         # # Wait a bit more to debug the handling of the next step
         # time.sleep(20)
         self.webdriver.close()
-        return originalResponse if wholeResponse else self.extractSamlResponse(originalResponse)
+        samlResponse = self.extractSamlResponse(originalResponse)
+        expiry = self.getExpiryTime(samlResponse)
+        return (originalResponse if wholeResponse else self.extractSamlResponse(originalResponse), expiry)
 
     def getOriginalResponse(self, responsePage):
         self.debug('Extracting original response from:%s', responsePage)
@@ -232,6 +236,25 @@ class AzureSamlClient(object):
         samlResponse = soup.find('input', {'name': 'SAMLResponse'}).get('value')
         self.debug('Original Saml Response:%s', samlResponse)
         return samlResponse
+
+    def getExpiryTime(self, samlResponse):
+        xmlAssertion = base64.b64decode(samlResponse).decode()
+        self.log.debug('Parsing at assertion:%s', xmlAssertion)
+        root = ET.fromstring(xmlAssertion)
+        condTag = '{urn:oasis:names:tc:SAML:2.0:assertion}Conditions'
+        xpathExpr = ".//{}".format(condTag)
+        conditions = root.findall(xpathExpr)
+        assert len(conditions) == 1, "No unique assertion conditions found"
+        cond = conditions[0]
+        expiryStr = cond.get('NotOnOrAfter')
+        self.log.debug('Got expiry string:%s', expiryStr)
+        # Python does not handle the 'Zulu time' suffix and 3.6 does not
+        # have fromisoformat class method T_T
+        expiryStr = re.sub('Z$', '+0000', expiryStr)
+        dateformat = '%Y-%m-%dT%H:%M:%S.%f%z'
+        expiry = datetime.strptime(expiryStr, dateformat)
+        logging.debug("SAML assertion expiry time:%s", expiry)
+        return expiry
 
 
 # Used only when invoked from the command line (i.e. during testing).

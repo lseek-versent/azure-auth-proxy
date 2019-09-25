@@ -22,7 +22,7 @@ configuration keys are understood and will be processed:
 
 
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from functools import lru_cache
 import json
 import os
@@ -37,7 +37,6 @@ from azureSaml import AzureSamlClient
 
 class GlobalProtectClient(object):
     CONFIG_KEY = 'vpn_login_hook'
-    CACHE_DURATION_SECS = 3598  # a little less than 1 hour
 
     def __init__(self, globalConfig, logger):
         """Parameters:
@@ -101,15 +100,15 @@ class GlobalProtectClient(object):
         samlClient = AzureSamlClient(self.globalConfig,
                                      samlRequest,
                                      self.log)
-        response = samlClient.submitSamlRequest()
+        response, expiry = samlClient.submitSamlRequest()
         preLoginCookie = self.getPreLoginCookie(response, relayState)
-        return (preLoginCookie, datetime.now())
+        return (preLoginCookie, expiry)
 
     def doAuth(self):
-        response, creationTime = self.getSAMLResponse()
-        self.log.debug('Got response created on:%s', creationTime)
-        now = datetime.now()
-        if now - creationTime > timedelta(seconds=self.CACHE_DURATION_SECS):
+        response, expiry = self.getSAMLResponse()
+        self.log.debug('Got response, expires on:%s', expiry)
+        now = datetime.now(tz=timezone.utc)
+        if now >= expiry:
             self.log.debug('Invalidating cached SAML response')
             self.getSAMLResponse.cache_clear()
             response, _ = self.getSAMLResponse()
