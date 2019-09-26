@@ -241,7 +241,7 @@ class AzureSamlClient(object):
         xmlAssertion = base64.b64decode(samlResponse).decode()
         self.log.debug('Parsing at assertion:%s', xmlAssertion)
         root = ET.fromstring(xmlAssertion)
-        condTag = '{urn:oasis:names:tc:SAML:2.0:assertion}Conditions'
+        condTag = '{urn:oasis:names:tc:SAML:2.0:assertion}SubjectConfirmationData'
         xpathExpr = ".//{}".format(condTag)
         conditions = root.findall(xpathExpr)
         assert len(conditions) == 1, "No unique assertion conditions found"
