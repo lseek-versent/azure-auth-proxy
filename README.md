@@ -1,4 +1,9 @@
-# A web app to authenticate services against Azure AD
+# A web app to authenticate services against some SAML backends
+
+Currently known backends are:
+
+* Azure AD
+* Ping ID
 
 ## Building
 
@@ -46,29 +51,44 @@ gpg --decrypt config.json.gpg | curl -d @- \
 ### `GET` an endpoint
 
 ```sh
-curl http://localhost:8080/globalProtect # gives prelogin cookie
+curl http://localhost:8080/azure/globalProtect # gives prelogin cookie
 ```
+
+The general format of an end point is:
+
+    http://localhost:8080/<saml-backend>/<service>
+
+where `saml-backend` is either `azure` or `ping`. As of now the following services are supported
+
+|Service        | Azure | Ping | Description                      |
+|---------------|-------|------|----------------------------------|
+| globalProtect | Yes   | No   | The PaloAlto GlobalProtect VPN   |
+| awsCli        | Yes   | Yes  | SAML assertion for AWS CLI       |
+| awsConsole    | Yes   | Yes  | For logging into the AWS console |
 
 ## Components
 
-The `authProxy` application contains the following components:
+The `authProxy` application contains the following components in its `authproxy` `python` package:
 
 * authProxy: Main `bottle` application that serves as the "auth proxy". Source file: `authProxy.py`
-* SAML lib: Library that does the SAML dance with Azure. Source file: `azureSaml.py`
-* Service proxies: Modules that perform service specific steps before and after the SAML dance. The following proxies are currently defined:
-    * AwsSamlClient: A module that performs authentication for access to the AWS console
-    * GlobalProtectClient: A module that performs authentication for access to the GlobalProtect VPN prelogin cookie (so that it can be passed on to openconnect).
+* sub-packages for each supported SAML backend:
+    * `azure`: Files related to Azure AD SAML IDP
+    * `ping`: Files related to PingID SAML IDP
+
+Within each sub-package there is a module that does the actual interaction with
+the IDP (`azureSaml.py` / `pingSaml.py`) and clients that use this common
+module to provide auth proxies for various services.
 
 
 ## Basic Flow
 
          Host           Docker Container      Intertubes
 
-       +--------+  (1)  +-------------+       +-------+
-       | Client |<----->| Auth proxy  |       | Azure |
-       +--------+  (7)  |   server    |       +---^---+
-                        +--+-------^--+          /|\
-                           |      /|\             |
+       +--------+  (1)  +-------------+       +------+
+       | Client |<----->| Auth proxy  |       | SAML |
+       +--------+  (7)  |   server    |       | IDP  |
+                        +--+-------^--+       +---.--+
+                           |      /|\            /|\
                         (2)|       |(6)           |
                           \|/      |              |
                         +--v-------+--+           |
@@ -82,7 +102,7 @@ The `authProxy` application contains the following components:
                         +-------------+
 
 
-1. The client (browser/curl/shell script) does an HTTP `GET` on an end point on
+1. The client (browser/`curl`/shell script) does an HTTP `GET` on an end point on
    the auth proxy which runs in a docker container. For the sake of security
    the docker container *must* be configured to publish only to the local host
    network interface so that only the local host can access the auth proxy
@@ -91,8 +111,8 @@ The `authProxy` application contains the following components:
    transferred to the service proxy depending on the end-point requested.
 3. The service proxy uses the SAML library to perform the SAML dance and get
    the SAML Response XML.
-4. The Azure AD service ultimately sends the SAML Response XML to the SAML
-   library which returns it to the service proxy.
+4. The IDP ultimately sends the SAML Response XML to the SAML library which
+   returns it to the service proxy.
 5. The service proxy uses the SAML response to complete the auth request and
    returns the result to the client.
 
@@ -121,19 +141,28 @@ holding the configuration for a particular module:
         "log_file": "<path to log file, optional. Default: /azuresaml/authproxy.log>"
     },
 
-    "saml_lib": {
+    "azure": {
         "username": "<username to log into AD as",
         "password": "<password for the user>",
         "totp_secret": "<totp generator secret>"
     },
 
-    "console_login_hook": {
+    "azure_aws": {
         "tenant_id": "<AWS tenant ID>",
         "app_id": "<APP ID URI>"
     },
 
-    "vpn_login_hook": {
+    "azure_globalprotect": {
         "server_url": "<Base URL to GlobalProtect VPN server>"
+    },
+
+    "ping": {
+        "ping_username": "<username to log into PingID as>",
+        "password": "<password for the user>",
+        "imap_server": "<IMAP server to get one-time tokens from>",
+        "imap_port": "<IMAP port to connect to>",
+        "imap_username": "<username to log into IMAP mailbox",
+        "imap_password": "<password for IMAP user"
     }
 }
 ```
@@ -141,9 +170,11 @@ holding the configuration for a particular module:
 The sections that are currently understood by the authProxy app are:
 
 * `auth_server`: Configuration for the authProxy app itself.
-* `saml_lib`: Configuration for the common SAML module.
-* `console_login_hook`: Configuration for the AwsSamlClient module.
-* `vpn_login_hook`: Configuration for the GlobalProtectClient module.
+* `azure`: Configuration for Azure AD IDP.
+* `azure_aws`: AWS configuration for Azure AD IDP
+* `azure_globalprotect`: GlobalProtectClient configuration for Azure AD IDP.
+* `ping`: Configuration for PingID IDP.
+* `ping_aws`: AWS configuration for PingID IDP
 
 Since this configuration contains secrets it is not advisable to save this to a
 cleartext file. Instead it should be saved to an encrypted file and decrypted
@@ -164,13 +195,13 @@ This endpoint accepts only a `POST` request. Use this endpoint to configure the
 auth proxy app. See [Link](#configuration)
 
 
-### `GET /globalProtect`
+### `GET /azure/globalProtect`
 `GET` this endpoint to get the GlobalProtect VPN prelogin cookie. This cookie
 can then be supplied to `openvpn` to log into the GlobalProtect VPN (would
 probably need to `sudo` first):
 
 ```sh
-curl http://localhost:8080/globalProtect | \
+curl http://localhost:8080/azure/globalProtect | \
 openconnect --protocol=gp \
     --usergroup gateway:prelogin-cookie \
     -u <vpn-username> \
@@ -184,9 +215,8 @@ to log into GlobalProtect VPN you need to trick the server into thinking it's
 either a windoze or a mac system (hence the `--os mac-intel` command line
 option).
 
-### `GET /awsConsole`
-`GET` the AWS console account selection page (the page you get after logging in
-via Azure AD).
+### `GET /azure/awsConsole`, `GET /ping/awsConsole`
+`GET` the AWS console account selection page for Azure / Ping IDP respectively.
 
 #### Some important background
 The SAML auth process, in very simple terms, is as follows:
@@ -194,19 +224,19 @@ The SAML auth process, in very simple terms, is as follows:
 Client (browser for the case of AWS console login):
     `GET` some service URL
 Service:
-    302 to Azure with login related parameters (mainly the SAML auth request)
+    302 to IDP with login related parameters (mainly the SAML auth request)
 Client:
-    Auth with Azure
-Azure:
+    Auth with IDP
+IDP:
     Return an HTML form which when submitted will tell the service client has
     been authenticated.
 
 
-The `azureSaml.py` module returns this HTML form to the `authAwsConsole.py`
-module which returns this back to the client browser. But when the browser
-submits this form *if the auth server hostname is NOT of the form \*.amazon.com
-then the AWS service rejects the response*, claiming no SAML response was
-provided to it.
+The `azureSaml.py` and `pingSaml.py` modules return this HTML form to the
+corresponding `authAwsConsole.py` module which returns this back to the client
+browser. But when the browser submits this form *if the auth server hostname is
+NOT of the form \*.amazon.com then the AWS service rejects the response*,
+claiming no SAML response was provided to it.
 
 If, however, the auth server hostname *IS* of the form \*.amazon.com, the AWS
 service accepts it. CORS? Unfortunately, I don't understand enough of web design
@@ -223,7 +253,9 @@ server:
 and then pointing the browser to
 http://anynameyouwant.amazon.com:8080/awsConsole
 
-
-## TODO
-* ~Proxy for CLI authentication.~
-* Convert the python code into a proper python package.
+### `GET /azure/awsCli`, `GET /ping/awsCli`
+`GET` the SAML assertion from the Azure / Ping IDP respectively. This assertion
+can then be used to log in via the CLI e.g. by using the `aws sts
+assume-role-with-saml` command line or by using the
+https://github.com/lseek-versent/awscli_multilogin utility to log into
+multiple AWS accounts with the same SAML assertion.
