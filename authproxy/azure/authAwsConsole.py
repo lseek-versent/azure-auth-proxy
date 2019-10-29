@@ -30,13 +30,14 @@ import urllib.parse
 from uuid import uuid4
 import zlib
 
-from azureSaml import AzureSamlClient
+from ..authClient import ServiceProxy
+from .azureSaml import AzureSamlClient
 
 
-class AwsSamlClient(object):
+class AwsSamlClient(ServiceProxy):
     """Log into the AWS console using the SAML client to do the SAML dance"""
 
-    CONFIG_KEY = 'console_login_hook'
+    CONFIG_KEY = 'azure_aws'
     CACHE_DURATION_SECS = 60*4 + 55
 
     def __init__(self, globalConfig, logger):

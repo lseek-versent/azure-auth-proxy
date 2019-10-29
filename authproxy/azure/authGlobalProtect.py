@@ -4,12 +4,12 @@ VPN
 This script is expected to be run as part of the bigger "auth proxy"
 application.
 
-The configuration options for this module should reside in the 'vpn_login_hook'
+The configuration options for this module should reside in the 'azure_globalprotect'
 sub-dictionary of the global configuration dictionary. The following
 configuration keys are understood and will be processed:
 
     {
-        'vpn_login_hook': {
+        'azure_globalprotect': {
             'server_url': "..."
         }
     }
@@ -32,11 +32,12 @@ from xml.etree import ElementTree
 
 import requests
 
-from azureSaml import AzureSamlClient
+from ..authClient import ServiceProxy
+from .azureSaml import AzureSamlClient
 
 
-class GlobalProtectClient(object):
-    CONFIG_KEY = 'vpn_login_hook'
+class GlobalProtectClient(ServiceProxy):
+    CONFIG_KEY = 'azure_globalprotect'
 
     def __init__(self, globalConfig, logger):
         """Parameters:

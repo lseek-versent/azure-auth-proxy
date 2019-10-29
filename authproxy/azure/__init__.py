@@ -1,0 +1,2 @@
+from .authAwsConsole import AwsSamlClient as AzureAwsSamlClient
+from .authGlobalProtect import GlobalProtectClient as AzureGlobalProtectClient

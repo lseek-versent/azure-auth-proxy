@@ -12,7 +12,7 @@ import base64
 
 from mitmproxy import http, ctx
 
-class ProcessAuthHook(object):
+class azureSamlInterceptor(object):
 
     def response(self, flow):
         requestObj = flow.request
@@ -32,4 +32,4 @@ class ProcessAuthHook(object):
             ctx.log.info('setting contents to:{}'.format(newContents))
             responseObj.set_text(newContents)
 
-addons = [ProcessAuthHook()]
+addons = [azureSamlInterceptor()]

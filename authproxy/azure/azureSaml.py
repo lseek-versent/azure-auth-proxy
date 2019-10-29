@@ -1,10 +1,10 @@
 """Library for performing Azure based SAML login
 
 This library takes in configuration as a dict object and reads configuration
-under the "saml_lib" section of the config object:
+under the "azure" section of the config object:
 
     {
-        "saml_lib": {
+        "azure": {
             "username": ...,
             "password_file": ...,
             "totp_secret_file": ...,
@@ -14,18 +14,10 @@ under the "saml_lib" section of the config object:
     }
 """
 
-from argparse import ArgumentParser
 import base64
 from datetime import datetime
-import getpass
 import json
-import logging
-import logging.config
-import os
-import os.path as osp
-from pprint import pprint
 import re
-import sys
 import time
 from xml.etree import ElementTree as ET
 
@@ -39,10 +31,10 @@ from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+from ..samlClient import SamlClient
 
-CONFFILE_PATH = os.getenv('CONFFILE_PATH', '/azuresaml/config.json')
-SAMLLIB_LOGGER = 'azureSamlLib'
-CONFIG_KEY = 'saml_lib'
+
+CONFIG_KEY = 'azure'
 
 
 class PageState(object):
@@ -118,20 +110,15 @@ class TokenInput(PageState):
     nextSelector = 'input[type=submit]'
 
 
-class AzureSamlClient(object):
-    """A client that does the actual SAML login dance.
-
-    The client takes a URL (which would include the SAML request) to initiate
-    the SAML login sequence along with credentials, performs the dance, and
-    returns the SAML response as a string."""
+class AzureSamlClient(SamlClient):
+    """A client that does the SAML login dance with Azure AD."""
 
     LOGIN_ATTEMPTS = 3
 
     def __init__(self, config, requestUrl, logger):
         """Parameters:
             config:
-                Configuration object that contains the saml library config
-                (under the "saml_lib" key).
+                Global configuration object.
             requestUrl:
                 URL to send the SAML request to - this initiates the SAML
                 dance.
@@ -141,12 +128,8 @@ class AzureSamlClient(object):
                 Skip the token input state, assume username + password is
                 enough.
         """
-        self.log = logger
-        self.debug = self.log.debug
-        self.error = self.log.error
-
-        self.requestUrl = requestUrl
-        libConfig = config['saml_lib']
+        super().__init__(config, requestUrl, logger)
+        libConfig = config[CONFIG_KEY]
         self.username = libConfig['username']
         self.password = libConfig['password']
         self.skipToken = libConfig.get('skip_token', False)
@@ -154,24 +137,7 @@ class AzureSamlClient(object):
             self.totpSecret = libConfig['totp_secret']
             self.totpToken = pyotp.TOTP(self.totpSecret).now()
         self.debug('Using username:%s', self.username)
-        self.webdriver = self.setupSelenium()
         self.startState = self.setupStates()
-
-    def setupSelenium(self):
-        """Set up connection with the (remote) selenium server"""
-        self.debug('Setting up selenium')
-        desired_capabilities = DesiredCapabilities.FIREFOX.copy()
-        proxy = Proxy()
-        proxy.proxyType = ProxyType.MANUAL
-        proxy.httpProxy = "localhost:8085"
-        proxy.sslProxy = "localhost:8085"
-        proxy.add_to_capabilities(desired_capabilities)
-
-        driver = webdriver.Remote(
-                command_executor='http://127.0.0.1:4444/wd/hub',
-                desired_capabilities=desired_capabilities)
-
-        return driver
 
     def setupStates(self):
         """Define and connect the states required login flow"""
@@ -222,95 +188,3 @@ class AzureSamlClient(object):
         samlResponse = self.extractSamlResponse(originalResponse)
         expiry = self.getExpiryTime(samlResponse)
         return (originalResponse if wholeResponse else self.extractSamlResponse(originalResponse), expiry)
-
-    def getOriginalResponse(self, responsePage):
-        self.debug('Extracting original response from:%s', responsePage)
-        match = re.search("__START_ORIGINAL_RESPONSE__:(.*):__END_ORIGINAL_RESPONSE__", responsePage)
-        originalEncodedResponse = match.group(1)
-        originalResponse = base64.b64decode(originalEncodedResponse).decode()
-        self.debug('Got original response:%s', originalResponse)
-        return originalResponse
-
-    def extractSamlResponse(self, responseHtml):
-        soup = BeautifulSoup(responseHtml, 'html.parser')
-        samlResponse = soup.find('input', {'name': 'SAMLResponse'}).get('value')
-        self.debug('Original Saml Response:%s', samlResponse)
-        return samlResponse
-
-    def getExpiryTime(self, samlResponse):
-        xmlAssertion = base64.b64decode(samlResponse).decode()
-        self.log.debug('Parsing at assertion:%s', xmlAssertion)
-        root = ET.fromstring(xmlAssertion)
-        condTag = '{urn:oasis:names:tc:SAML:2.0:assertion}SubjectConfirmationData'
-        xpathExpr = ".//{}".format(condTag)
-        conditions = root.findall(xpathExpr)
-        assert len(conditions) == 1, "No unique assertion conditions found"
-        cond = conditions[0]
-        expiryStr = cond.get('NotOnOrAfter')
-        self.log.debug('Got expiry string:%s', expiryStr)
-        # Python does not handle the 'Zulu time' suffix and 3.6 does not
-        # have fromisoformat class method T_T
-        expiryStr = re.sub('Z$', '+0000', expiryStr)
-        dateformat = '%Y-%m-%dT%H:%M:%S.%f%z'
-        expiry = datetime.strptime(expiryStr, dateformat)
-        logging.debug("SAML assertion expiry time:%s", expiry)
-        return expiry
-
-
-# Used only when invoked from the command line (i.e. during testing).
-def setupLogging(loglevel=logging.INFO):
-    log_config = {
-        'version': 1,
-        'formatters': {
-            'custom': {
-                'format': '%(levelname)s:%(funcName)s:%(lineno)d: %(message)s',
-            },
-        },
-        'handlers': {
-            'custom': {
-                'class': 'logging.StreamHandler',
-                'formatter': 'custom',
-                'stream': sys.stdout,
-            },
-        },
-        'loggers': {
-            SAMLLIB_LOGGER: {
-                'handlers': ['custom'],
-                'propagate': False,
-            },
-        },
-        'root': {
-            'level': logging.INFO,
-            'handlers': ['custom'],
-        },
-    }
-    logging.config.dictConfig(log_config)
-
-
-# Used only when invoked from the command line (i.e. during testing).
-def main(argv):
-    parser = ArgumentParser(description='Azure SAML client')
-
-    parser.add_argument('-c', '--config-file', default=CONFFILE_PATH,
-        help='Path to the config file')
-    parser.add_argument('-w', '--whole-response', action='store_true',
-        help=('Return the whole auth response doc rather than just the '
-              'SAMLResponse string'))
-    parser.add_argument('url',
-        help='The URL to submit the SAML login request to')
-    args = parser.parse_args(argv)
-
-    import json
-    with open(args.config_file) as cfgfile:
-        globalConfig = json.load(cfgfile)
-    setupLogging()
-    logger = logging.getLogger(SAMLLIB_LOGGER)
-    if globalConfig[CONFIG_KEY]['verbose_logs']:
-        logger.setLevel(logging.DEBUG)
-    samlClient = AzureSamlClient(globalConfig, args.url, logger)
-    response = samlClient.submitSamlRequest(args.whole_response)
-    print(response, end='')
-
-
-if __name__ == '__main__':
-    main(sys.argv[1:])
