@@ -65,7 +65,7 @@ class PingImapReader(object):
                 except NoToken:
                     self.log.warning("No unread token found in mailbox")
                     pass
-                sleep(1)
+                sleep(2)
                 attempts -= 1
             else:
                 self.log.error("No unread ping token found in inbox after %s attempts",

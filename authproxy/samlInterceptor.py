@@ -1,25 +1,23 @@
-"""Intercept response to Azure SAML auth workflow
+"""Generic interceptor for SAML auth responses.
 
-More specifically, intercept the response to the
-/SAS/ProcessAuth request, base64 encrypt it and "wrap" it around an easily
-parsable HTML comment (so that selennium/firefox does not try to parse it).
-
-Note that the comment needs to reside within the
-<html>...</html> document else Selenium seems to discard
-it."""
+Since the process of handling SAML responses is the same we can actually have a
+generic interceptor"""
 
 import base64
+import re
 
 from mitmproxy import http, ctx
 
-class azureSamlInterceptor(object):
+
+class SamlInterceptor(object):
+    MATCH_EXPR = re.compile(r'''name=['"]SAMLResponse['"]''')
 
     def response(self, flow):
         requestObj = flow.request
-        if requestObj.url.endswith('/SAS/ProcessAuth'):
-            ctx.log.info('Intercepted SAML ProcessAuth response')
-            responseObj = flow.response
-            origContents = responseObj.get_text()
+        responseObj = flow.response
+        origContents = responseObj.get_text()
+        if self.MATCH_EXPR.search(origContents):
+            ctx.log.warn('Intercepted SAML ProcessAuth response')
             origEncoded = base64.standard_b64encode(origContents.encode())
             newContents = ('<html><body><p name="SAMLResponse">'
                            'Login Successful'
@@ -32,4 +30,4 @@ class azureSamlInterceptor(object):
             ctx.log.info('setting contents to:{}'.format(newContents))
             responseObj.set_text(newContents)
 
-addons = [azureSamlInterceptor()]
+addons = [SamlInterceptor()]

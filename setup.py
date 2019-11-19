@@ -20,6 +20,9 @@ setup(name='authproxy',
       install_requires=requirements,
       entry_points={
           'console_scripts': [
-            'authproxy=authproxy:main',
+              'authproxy=authproxy:main',
           ],
-      })
+      },
+      # Install interceptor script as an "executable" though it is not so that
+      # it's in a convenient location
+      scripts=['authproxy/samlInterceptor.py'])

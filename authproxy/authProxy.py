@@ -29,7 +29,7 @@ import sys
 import bottle
 
 from .azure import AzureGlobalProtectClient, AzureAwsSamlClient
-from .ping import PingAwsSamlClient
+from .ping import PingAwsSamlClient, PingAtlassianClient
 
 
 AUTH_PROXY_PORT = 8080
@@ -45,6 +45,7 @@ class AuthProxy(bottle.Bottle):
         },
         'ping': {
             'aws': PingAwsSamlClient,
+            'atlassian': PingAtlassianClient,
         },
     }
 
@@ -63,6 +64,7 @@ class AuthProxy(bottle.Bottle):
             },
             'ping': {
                 'aws': None,
+                'atlassian': None,
             },
         }
         self.azureGlobalProtectProxy = None
@@ -77,6 +79,8 @@ class AuthProxy(bottle.Bottle):
                  callback=partial(self.proxyAuth, service='aws', forConsole=True))
         self.get('/<backend>/awsCli',
                  callback=partial(self.proxyAuth, service='aws', forConsole=False))
+        self.get('/<backend>/atlassian',
+                 callback=partial(self.proxyAuth, service='atlassian'))
 
     def postConfig(self):
         """Receive app config into memory"""
@@ -105,14 +109,25 @@ class AuthProxy(bottle.Bottle):
     def proxyAuth(self, backend, service, **authArgs):
         self.log.debug(f'Auth for {service}/{backend} with args:{authArgs}')
         proxyObj = self.getProxy(backend, service)
-        headers, body = proxyObj.doAuth(**authArgs)
-        raise bottle.HTTPResponse(body=body,
+        results = proxyObj.doAuth(**authArgs)
+        cookiejar = []
+        if len(results) == 3:
+            headers, body, cookiejar = results
+        else:
+            headers, body = results
+        response = bottle.HTTPResponse(body=body,
                                   status=200,
                                   headers=headers)
+        for cookie in cookiejar:
+            response.set_cookie(cookie.name,
+                                cookie.value,
+                                domain=cookie.domain,
+                                path=cookie.path)
+        raise response
 
     def getLogger(self):
         verbose = self.config.get('verbose_logs', False)
-        logFormat = '%(levelname)s:%(funcName)s:%(lineno)d: %(message)s'
+        logFormat = '%(asctime)s %(levelname)s:%(funcName)s:%(lineno)d: %(message)s'
         formatter = logging.Formatter(fmt=logFormat)
         # We have to use a log file because 'bottle' seems to swallow up stdout
         # and stderr
