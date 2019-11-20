@@ -39,17 +39,7 @@ class AtlassianClient(ServiceProxy):
         config = globalConfig[self.CONFIG_KEY]
         self.username = config['username']
         self.csrfToken = None
-        self.cookieJar = self.initCookieJar()
-
-    def initCookieJar(self):
-        cookieJar = requests.cookies.RequestsCookieJar()
-        fakeCookies = [
-            ('ajs_anonymous_id', '%220e2d8077-8aa2-4abd-8a6b-cc388af63a08%22'),
-            ('__cid', 'e5b6b60c-cb0f-42cf-8714-63a0732264c0-669c7da6dce7c4a69db77dfa'),
-        ]
-        for name, val in fakeCookies:
-            cookieJar.set(name, val, domain='atlassian.com', path='/')
-        return cookieJar
+        self.cookieJar = requests.cookies.RequestsCookieJar()
 
     def resetCookieDomains(self):
         cookieJar = requests.cookies.RequestsCookieJar()

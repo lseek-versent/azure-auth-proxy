@@ -51,6 +51,11 @@ class PingImapReader(object):
         self.log.debug('Got contents:%s', contents)
         matches = re.search(TOKEN_MATCH_RE, contents, re.DOTALL)
         self.log.debug('Found matches:%s', matches.groups())
+        # delete message since it's of no use any more. NOTE: Deleting a
+        # message in IMAP requires setting the deleted flag and then expunging
+        # the message
+        client.store(lastMail, '+FLAGS', '\\Deleted')
+        client.expunge()
         return matches.group(1)
 
     def getOtpEmail(self, maxAttempts=15):
