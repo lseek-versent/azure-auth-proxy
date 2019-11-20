@@ -65,6 +65,7 @@ where `saml-backend` is either `azure` or `ping`. As of now the following servic
 | globalProtect | Yes   | No   | The PaloAlto GlobalProtect VPN   |
 | awsCli        | Yes   | Yes  | SAML assertion for AWS CLI       |
 | awsConsole    | Yes   | Yes  | For logging into the AWS console |
+| atlassian     | No    | Yes  | For logging into versent atlassian |
 
 ## Components
 
@@ -163,7 +164,16 @@ holding the configuration for a particular module:
         "imap_port": "<IMAP port to connect to>",
         "imap_username": "<username to log into IMAP mailbox",
         "imap_password": "<password for IMAP user"
+    },
+
+    "ping_aws": {
+        "login_url": "<URL to AWS console FROM VERSENT PING desktop page>"
+    },
+
+    "ping_atlassian": {
+        "username": "<versent atlassian account username>"
     }
+
 }
 ```
 
@@ -175,6 +185,7 @@ The sections that are currently understood by the authProxy app are:
 * `azure_globalprotect`: GlobalProtectClient configuration for Azure AD IDP.
 * `ping`: Configuration for PingID IDP.
 * `ping_aws`: AWS configuration for PingID IDP
+* `ping_atlassian`: Atlassian configuration for PingID IDP
 
 Since this configuration contains secrets it is not advisable to save this to a
 cleartext file. Instead it should be saved to an encrypted file and decrypted
@@ -251,7 +262,7 @@ server:
     127.0.0.1  anynameyouwant.amazon.com
 
 and then pointing the browser to
-http://anynameyouwant.amazon.com:8080/awsConsole
+http://anynameyouwant.amazon.com:8080/<azure|ping>/awsConsole
 
 ### `GET /azure/awsCli`, `GET /ping/awsCli`
 `GET` the SAML assertion from the Azure / Ping IDP respectively. This assertion
@@ -259,3 +270,10 @@ can then be used to log in via the CLI e.g. by using the `aws sts
 assume-role-with-saml` command line or by using the
 https://github.com/lseek-versent/awscli_multilogin utility to log into
 multiple AWS accounts with the same SAML assertion.
+
+### `GET /ping/atlassian`
+Similar to AWS console except for Atlassian login. This always takes you to the JIRA page from where you can jump to any other Atlassian application. Note: just as for the aws console, you need a fake `atlassian.com` domain name alias to make it work. E.g.
+
+    127.0.0.1 mylogin.atlassian.com
+
+and then point the browser to http://mylogin.atlassian.com:8080/ping/atlassian
