@@ -81,6 +81,7 @@ class AtlassianClient(ServiceProxy):
                              data=data,
                              cookies=self.cookieJar)
         resp.raise_for_status()
+        self.debug(f'check-username data:{resp.json()}')
         redirectUri = resp.json()['redirect_uri']
         self.cookieJar.update(resp.cookies)
         self.debug(f"Cookies after check-username:{self.cookieJar}")

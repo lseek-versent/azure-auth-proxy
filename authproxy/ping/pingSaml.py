@@ -120,8 +120,10 @@ class PingSamlClient(SamlClient):
         except NoSuchElementException:
             self.debug('No token selector found')
         else:
+            self.debug('Submitting token')
             self.submitToken()
 
+        self.debug('waiting for saml response')
         self.waitFor('[name=SAMLResponse]')
         self.debug('Got saml response')
         return self.webdriver.page_source

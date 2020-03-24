@@ -18,7 +18,8 @@ class SamlInterceptor(object):
         contentType = responseObj.headers.get("Content-Type")
         if contentType.startswith("text/html"):
             origContents = responseObj.get_text()
-            if self.MATCH_EXPR.search(origContents):
+            match = self.MATCH_EXPR.search(origContents)
+            if match:
                 ctx.log.warn('Intercepted SAML ProcessAuth response')
                 origEncoded = base64.standard_b64encode(origContents.encode())
                 newContents = ('<html><body><p name="SAMLResponse">'
@@ -28,8 +29,6 @@ class SamlInterceptor(object):
                 newContents += origEncoded.decode()
                 newContents += (':__END_ORIGINAL_RESPONSE__ */</script>'
                                 '</body></html>')
-                ctx.log.info('response headers:{}'.format(responseObj.headers.items()))
-                ctx.log.info('setting contents to:{}'.format(newContents))
                 responseObj.set_text(newContents)
 
 addons = [SamlInterceptor()]

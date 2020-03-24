@@ -1,4 +1,4 @@
-"""A simple web server that performs the Azure SAML dance for various services.
+"""A simple web server that performs the SAML dance for various services.
 
 The web server starts without any state and needs to be configured (via it's
 HTTP API) before it can be of any use. To do so the configuration should be
@@ -29,7 +29,7 @@ import sys
 import bottle
 
 from .azure import AzureGlobalProtectClient, AzureAwsSamlClient
-from .ping import PingAwsSamlClient, PingAtlassianClient
+from .ping import PingAwsSamlClient, PingAtlassianClient, PingImapReader
 
 
 AUTH_PROXY_PORT = 8080
@@ -81,6 +81,7 @@ class AuthProxy(bottle.Bottle):
                  callback=partial(self.proxyAuth, service='aws', forConsole=False))
         self.get('/<backend>/atlassian',
                  callback=partial(self.proxyAuth, service='atlassian'))
+        self.get('/<backend>/pingtoken', callback=self.getPingToken)
 
     def postConfig(self):
         """Receive app config into memory"""
@@ -105,6 +106,23 @@ class AuthProxy(bottle.Bottle):
             proxyClass = self.PROXY_CLASSES[backend][service]
             proxies[backend][service] = proxyClass(self.globalConfig, self.log)
         return proxies[backend][service]
+
+    def getPingToken(self, backend):
+        if backend != 'ping':
+            raise bottle.HTTPError(400, f"ping token not available for {backend}")
+        pingConfig = self.globalConfig.get('ping')
+        imapUsername = pingConfig['imap_username']
+        imapPassword = pingConfig['imap_password']
+        imapServer = pingConfig['imap_server']
+        imapPort = pingConfig['imap_port']
+        imapClient = PingImapReader(imapServer,
+                                    imapPort,
+                                    imapUsername,
+                                    imapPassword,
+                                    self.log)
+        response = bottle.HTTPResponse(body=imapClient.getOtpEmail(),
+                                       status=200)
+        raise response
 
     def proxyAuth(self, backend, service, **authArgs):
         self.log.debug(f'Auth for {service}/{backend} with args:{authArgs}')
