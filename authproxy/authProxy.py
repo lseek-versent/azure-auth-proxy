@@ -29,7 +29,7 @@ import sys
 import bottle
 
 from .azure import AzureGlobalProtectClient, AzureAwsSamlClient
-from .ping import PingAwsSamlClient, PingAtlassianClient, PingImapReader
+from .ping import PingAwsSamlClient, PingAtlassianClient, PingImapReader, PingBoxClient
 
 
 AUTH_PROXY_PORT = 8080
@@ -46,6 +46,7 @@ class AuthProxy(bottle.Bottle):
         'ping': {
             'aws': PingAwsSamlClient,
             'atlassian': PingAtlassianClient,
+            'box': PingBoxClient,
         },
     }
 
@@ -65,6 +66,7 @@ class AuthProxy(bottle.Bottle):
             'ping': {
                 'aws': None,
                 'atlassian': None,
+                'box': None,
             },
         }
         self.azureGlobalProtectProxy = None
@@ -81,6 +83,8 @@ class AuthProxy(bottle.Bottle):
                  callback=partial(self.proxyAuth, service='aws', forConsole=False))
         self.get('/<backend>/atlassian',
                  callback=partial(self.proxyAuth, service='atlassian'))
+        self.get('/<backend>/box',
+                 callback=partial(self.proxyAuth, service='box'))
         self.get('/<backend>/pingtoken', callback=self.getPingToken)
 
     def postConfig(self):
