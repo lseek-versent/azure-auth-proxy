@@ -63,23 +63,36 @@ class AtlassianClient(ServiceProxy):
         params = {
             'continue': ['https://versent.atlassian.net/login?redirectCount=1&application=jira'],
             'application': ['jira'],
-            'headers': {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:67.0) Gecko/20100101 Firefox/67.0'},
         }
-        resp = requests.get('https://id.atlassian.com/login', params=params)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0',
+            'Content-type': 'application/json',
+        }
+        resp = requests.get('https://id.atlassian.com/login', params=params, headers=headers)
+        self.debug('request headers:%s', resp.request.headers)
         resp.raise_for_status()
         csrfToken = resp.cookies['atlassian.account.xsrf.token']
         self.debug(f'Got csrfToken:{csrfToken}')
         self.cookieJar = resp.cookies
         self.debug(f"Initial cookies:{self.cookieJar}")
         self.csrfToken = csrfToken
-        data = {
-            'csrfToken': csrfToken,
-            'username': self.username,
+        jason = {'username': self.username}
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0',
+            'Content-type': 'application/json',
+            'Referer': 'https://id.atlassian.com/',
+            'X-CSRF-TOKEN': self.csrfToken,
+            'Origin': 'https://id.atlassian.com',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
         }
         resp = requests.post('https://id.atlassian.com/rest/check-username',
                              params=params,
-                             data=data,
+                             json=jason,
+                             headers=headers,
                              cookies=self.cookieJar)
+        self.debug('raw response:%s', resp.text)
         resp.raise_for_status()
         self.debug(f'check-username data:{resp.json()}')
         redirectUri = resp.json()['redirect_uri']

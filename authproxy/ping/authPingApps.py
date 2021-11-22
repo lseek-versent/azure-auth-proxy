@@ -1,21 +1,7 @@
-"""Authenticate Box account with PingID.
+"""Authenticate an app in the Versent PingID portal with PingID.
 
 This script is expected to be run as part of the bigger "auth proxy"
 application.
-
-The configuration options for this module should reside in the 'ping_box'
-sub-dictionary of the global configuration dictionary. The following
-configuration keys are understood and will be processed:
-
-    {
-        'ping_box': {
-            'start_sso_url': 'https://url.to.box/from/ping',
-        }
-    }
-
-    where:
-        start_sso_url:
-            The URL to PingID that returns the SAML request and relay state.
 """
 import base64
 from datetime import datetime, timezone
@@ -27,8 +13,12 @@ from ..authClient import ServiceProxy
 from .pingSaml import PingSamlClient
 
 
-class BoxClient(ServiceProxy):
-    """Log into a Box account using the SAML client to do the SAML dance"""
+class PingApp(ServiceProxy):
+    """Log into a PingID app on the Versent desktop portal using the ping SAML
+    client to do the SAML dance"""
+
+    # Subclasses MUST override this
+    PARTNER_SP_ID = ""
 
     def __init__(self, globalConfig, logger):
         """Parameters:
@@ -45,8 +35,8 @@ class BoxClient(ServiceProxy):
 
     def getSAMLResponse(self):
         self.log.debug("Getting SAML response")
-        boxUrl = 'https://id.versent.com.au/idp/startSSO.ping?PartnerSpId=box.net'
-        samlClient = PingSamlClient(self.globalConfig, boxUrl, self.log)
+        appUrl = f'https://id.versent.com.au/idp/startSSO.ping?PartnerSpId={self.PARTNER_SP_ID}'
+        samlClient = PingSamlClient(self.globalConfig, appUrl, self.log)
         response, expiry = samlClient.submitSamlRequest(wholeResponse=True)
         return (samlClient, response, expiry)
 
@@ -65,5 +55,17 @@ class BoxClient(ServiceProxy):
         self.log.debug('Returning SAMLResponse:%s', response)
         headers = {
             'Content-Type': 'text/html' if forConsole else 'text/plain',
+            'Origin': 'https://id.versent.com.au',
+            'Referer': 'https://id.versent.com.au',
         }
         return (headers, response)
+
+
+class BoxClient(PingApp):
+    """Box account"""
+
+    PARTNER_SP_ID = 'box.net'
+
+
+class LucidChartClient(PingApp):
+    PARTNER_SP_ID = 'lucidchart.com'

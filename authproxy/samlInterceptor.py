@@ -16,8 +16,10 @@ class SamlInterceptor(object):
         requestObj = flow.request
         responseObj = flow.response
         contentType = responseObj.headers.get("Content-Type")
+        ctx.log.warn('Examing response from:%s %s' %(requestObj.host, requestObj.path))
         if contentType.startswith("text/html"):
             origContents = responseObj.get_text()
+            ctx.log.warn('Examing:%s' % (origContents[:100],))
             match = self.MATCH_EXPR.search(origContents)
             if match:
                 ctx.log.warn('Intercepted SAML ProcessAuth response')
