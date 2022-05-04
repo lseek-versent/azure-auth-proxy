@@ -6,6 +6,7 @@ application.
 import base64
 from datetime import datetime, timezone
 from functools import lru_cache
+import urllib.parse
 
 from bs4 import BeautifulSoup
 
@@ -35,7 +36,8 @@ class PingApp(ServiceProxy):
 
     def getSAMLResponse(self):
         self.log.debug("Getting SAML response")
-        appUrl = f'https://id.versent.com.au/idp/startSSO.ping?PartnerSpId={self.PARTNER_SP_ID}'
+        sp_id = urllib.parse.quote(self.PARTNER_SP_ID, safe='')
+        appUrl = f'https://id.versent.com.au/idp/startSSO.ping?PartnerSpId={sp_id}'
         samlClient = PingSamlClient(self.globalConfig, appUrl, self.log)
         response, expiry = samlClient.submitSamlRequest(wholeResponse=True)
         return (samlClient, response, expiry)
@@ -69,3 +71,15 @@ class BoxClient(PingApp):
 
 class LucidChartClient(PingApp):
     PARTNER_SP_ID = 'lucidchart.com'
+
+
+class LeverClient(PingApp):
+    PARTNER_SP_ID = 'https://auth.lever.co/sp'
+
+
+class MiroClient(PingApp):
+    PARTNER_SP_ID = 'https://miro.com/'
+
+
+class WorkdayClient(PingApp):
+    PARTNER_SP_ID = 'https://wd3.myworkday.com/aett/login-saml.htmld'

@@ -33,7 +33,10 @@ from .ping import (PingAwsSamlClient,
                    PingAtlassianClient,
                    PingImapReader,
                    PingBoxClient,
-                   PingLucidChartClient)
+                   PingLucidChartClient,
+                   PingLeverClient,
+                   PingMiroClient,
+                   PingWorkdayClient)
 
 
 AUTH_PROXY_PORT = 8080
@@ -52,6 +55,9 @@ class AuthProxy(bottle.Bottle):
             'atlassian': PingAtlassianClient,
             'box': PingBoxClient,
             'lucidchart': PingLucidChartClient,
+            'lever': PingLeverClient,
+            'miro': PingMiroClient,
+            'workday': PingWorkdayClient,
         },
     }
 
@@ -73,6 +79,9 @@ class AuthProxy(bottle.Bottle):
                 'atlassian': None,
                 'box': None,
                 'lucidchart': None,
+                'lever': None,
+                'miro': None,
+                'workday': None,
             },
         }
         self.azureGlobalProtectProxy = None
@@ -93,6 +102,12 @@ class AuthProxy(bottle.Bottle):
                  callback=partial(self.proxyAuth, service='box'))
         self.get('/<backend>/lucidchart',
                  callback=partial(self.proxyAuth, service='lucidchart'))
+        self.get('/<backend>/lever',
+                 callback=partial(self.proxyAuth, service='lever'))
+        self.get('/<backend>/miro',
+                 callback=partial(self.proxyAuth, service='miro'))
+        self.get('/<backend>/workday',
+                 callback=partial(self.proxyAuth, service='workday'))
         self.get('/<backend>/pingtoken', callback=self.getPingToken)
 
     def postConfig(self):
